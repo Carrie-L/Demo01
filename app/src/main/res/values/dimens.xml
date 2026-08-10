@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="outer_item_horizontal_margin">14dp</dimen>
+    <dimen name="card_horizontal_padding">14.5dp</dimen>
+    <dimen name="card_vertical_padding">16dp</dimen>
+    <dimen name="stat_item_spacing">10dp</dimen>
+    <dimen name="card_corner_radius">16dp</dimen>
+</resources>

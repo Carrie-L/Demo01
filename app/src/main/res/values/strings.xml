@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">Demo01</string>
+    <string name="home_title">RecyclerView 布局 Demo</string>
+    <string name="open_font_scale_demo">打开五项字体缩放 Demo</string>
+    <string name="font_scale_demo_title">五项字体缩放</string>
+    <string name="font_scale_control_title">功能区文字倍率</string>
+    <string name="font_scale_control_hint">拖动滑杆测试 1.00×–2.00×，容量单位始终保持 12sp</string>
+    <string name="font_scale_value">当前：%1$.2f×</string>
+    <string name="follow">关注</string>
+    <string name="download">下载</string>
+    <string name="bookmark">书签</string>
+    <string name="favorite">收藏</string>
+    <string name="storage_cleanup">空间清理</string>
+    <string name="mock_item_title">Mock 列表项 %1$d</string>
+    <string name="mock_item_body">用于验证外层 RecyclerView 可以正常纵向滚动。</string>
 </resources>
