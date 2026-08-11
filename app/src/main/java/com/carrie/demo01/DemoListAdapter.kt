@@ -1,6 +1,12 @@
 package com.carrie.demo01
 
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -10,6 +16,10 @@ import androidx.annotation.StringRes
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.roundToInt
+
+private const val BASE_VALUE_TEXT_SIZE_SP = 18f
+private const val BASE_LABEL_TEXT_SIZE_SP = 13f
+private const val STAT_LABEL_MAX_LINES = 4
 
 data class StatItem(
     val value: String? = null,
@@ -90,12 +100,16 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
 
         fun bind(scale: Float, onScaleChanged: (Float) -> Unit) {
             seekBar.setOnSeekBarChangeListener(null)
-            seekBar.progress = ((scale - MIN_SCALE) * 100).roundToInt()
+            seekBar.progress = (
+                (scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * seekBar.max
+            ).roundToInt()
             updateScaleText(scale)
             seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (!fromUser) return
-                    val newScale = MIN_SCALE + progress / 100f
+                    val maxProgress = seekBar?.max?.coerceAtLeast(1) ?: 100
+                    val fraction = progress / maxProgress.toFloat()
+                    val newScale = MIN_SCALE + (MAX_SCALE - MIN_SCALE) * fraction
                     updateScaleText(newScale)
                     onScaleChanged(newScale)
                 }
@@ -113,11 +127,14 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
 
     private class StatCardViewHolder(
         itemView: View,
-        items: List<StatItem>,
+        private val items: List<StatItem>,
     ) : RecyclerView.ViewHolder(itemView) {
         private val recyclerView = itemView as RecyclerView
         private val spacingPx = itemView.resources.getDimensionPixelSize(R.dimen.stat_item_spacing)
+        private val valueLabelSpacingPx =
+            itemView.resources.getDimensionPixelSize(R.dimen.stat_value_label_spacing)
         private val statAdapter = StatAdapter(items)
+        private var currentScale = 1f
 
         init {
             recyclerView.layoutManager = NonScrollableHorizontalLayoutManager(itemView.context)
@@ -127,27 +144,85 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
             recyclerView.addOnLayoutChangeListener { view, left, _, right, _, oldLeft, _, oldRight, _ ->
                 val width = right - left
                 val oldWidth = oldRight - oldLeft
-                if (width != oldWidth) updateItemWidth(view.width)
+                if (width != oldWidth) updateItemLayout(view.width)
             }
-            recyclerView.post { updateItemWidth(recyclerView.width) }
+            recyclerView.post { updateItemLayout(recyclerView.width) }
         }
 
         fun bind(scale: Float) {
-            statAdapter.updateScale(scale)
-            updateItemWidth(recyclerView.width)
+            currentScale = scale.coerceIn(MIN_SCALE, MAX_SCALE)
+            statAdapter.updateScale(currentScale)
+            updateItemLayout(recyclerView.width)
         }
 
-        private fun updateItemWidth(recyclerViewWidth: Int) {
+        private fun updateItemLayout(recyclerViewWidth: Int) {
             if (recyclerViewWidth <= 0 || statAdapter.itemCount == 0) return
             val availableWidth = recyclerViewWidth - recyclerView.paddingLeft - recyclerView.paddingRight
             val totalSpacing = spacingPx * (statAdapter.itemCount - 1)
             val itemWidth = ((availableWidth - totalSpacing) / statAdapter.itemCount).coerceAtLeast(1)
+            val itemHeight = calculateItemHeight(itemWidth)
             if (recyclerView.isComputingLayout) {
-                recyclerView.post { statAdapter.updateItemWidth(itemWidth) }
+                recyclerView.post { applyItemLayout(itemWidth, itemHeight) }
             } else {
-                statAdapter.updateItemWidth(itemWidth)
+                applyItemLayout(itemWidth, itemHeight)
             }
         }
+
+        private fun applyItemLayout(itemWidth: Int, itemHeight: Int) {
+            val recyclerViewHeight =
+                recyclerView.paddingTop + itemHeight + recyclerView.paddingBottom
+            if (recyclerView.layoutParams.height != recyclerViewHeight) {
+                recyclerView.layoutParams = recyclerView.layoutParams.apply {
+                    height = recyclerViewHeight
+                }
+            }
+            statAdapter.updateItemWidth(itemWidth)
+        }
+
+        /**
+         * The inner RecyclerView needs an exact cross-axis height so every
+         * child can fill it and anchor its label to the same bottom edge.
+         * Measure the tallest label at the current width/scale instead of
+         * relying on whichever child LinearLayoutManager happens to measure.
+         */
+        private fun calculateItemHeight(itemWidth: Int): Int {
+            val numberPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = spToPx(BASE_VALUE_TEXT_SIZE_SP * currentScale)
+                typeface = Typeface.create("sans", Typeface.BOLD)
+            }
+            val numberMetrics = numberPaint.fontMetricsInt
+            val numberHeight = numberMetrics.descent - numberMetrics.ascent
+
+            val labelPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = spToPx(BASE_LABEL_TEXT_SIZE_SP * currentScale)
+                typeface = Typeface.create("sans", Typeface.NORMAL)
+            }
+            val tallestLabelHeight = items.maxOf { item ->
+                val labelText = itemView.context.getString(item.labelRes)
+                StaticLayout.Builder.obtain(
+                    labelText,
+                    0,
+                    labelText.length,
+                    labelPaint,
+                    itemWidth,
+                )
+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setIncludePad(false)
+                    .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+                    .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+                    .setMaxLines(STAT_LABEL_MAX_LINES)
+                    .build()
+                    .height
+            }
+
+            return numberHeight + valueLabelSpacingPx + tallestLabelHeight
+        }
+
+        private fun spToPx(value: Float): Float = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_SP,
+            value,
+            itemView.resources.displayMetrics,
+        )
     }
 
     private class MockContentViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -166,8 +241,8 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
         private const val STAT_CARD_POSITION = 1
         private const val FIXED_ITEM_COUNT = 2
         private const val MOCK_CONTENT_COUNT = 6
-        private const val MIN_SCALE = 1f
-        private const val MAX_SCALE = 2f
+        private const val MIN_SCALE = 0.85f
+        private const val MAX_SCALE = 1.45f
         private const val PAYLOAD_SCALE = "payload_scale"
     }
 }
@@ -231,10 +306,6 @@ private class StatAdapter(
             }
         }
 
-        companion object {
-            private const val BASE_VALUE_TEXT_SIZE_SP = 18f
-            private const val BASE_LABEL_TEXT_SIZE_SP = 13f
-        }
     }
 
     companion object {

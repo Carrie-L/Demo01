@@ -4,5 +4,7 @@
     <dimen name="card_horizontal_padding">14.5dp</dimen>
     <dimen name="card_vertical_padding">16dp</dimen>
     <dimen name="stat_item_spacing">10dp</dimen>
+    <dimen name="stat_value_label_spacing">6dp</dimen>
     <dimen name="card_corner_radius">16dp</dimen>
+    <dimen name="cs_10_sp">10sp</dimen>
 </resources>
