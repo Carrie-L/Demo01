@@ -124,7 +124,7 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
 
     private class StatCardViewHolder(
         itemView: View,
-        items: List<StatItem>,
+        private val items: List<StatItem>,
     ) : RecyclerView.ViewHolder(itemView) {
         private val recyclerView = itemView as RecyclerView
         private val spacingPx = itemView.resources.getDimensionPixelSize(R.dimen.stat_item_spacing)
@@ -148,8 +148,10 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
 
         fun bind(scale: Float) {
             currentScale = scale.coerceIn(MIN_SCALE, MAX_SCALE)
-            statAdapter.updateScale(currentScale)
             updateItemLayout(recyclerView.width)
+            if (recyclerView.width <= 0) {
+                recyclerView.post { updateItemLayout(recyclerView.width) }
+            }
         }
 
         private fun updateItemLayout(recyclerViewWidth: Int) {
@@ -157,15 +159,22 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
             val availableWidth = recyclerViewWidth - recyclerView.paddingLeft - recyclerView.paddingRight
             val totalSpacing = spacingPx * (statAdapter.itemCount - 1)
             val itemWidth = ((availableWidth - totalSpacing) / statAdapter.itemCount).coerceAtLeast(1)
-            val itemHeight = calculateItemHeight()
+            val commonLabelTextSizePx = calculateCommonLabelTextSize(itemWidth)
+            val itemHeight = calculateItemHeight(commonLabelTextSizePx)
             if (recyclerView.isComputingLayout) {
-                recyclerView.post { applyItemLayout(itemWidth, itemHeight) }
+                recyclerView.post {
+                    applyItemLayout(itemWidth, itemHeight, commonLabelTextSizePx)
+                }
             } else {
-                applyItemLayout(itemWidth, itemHeight)
+                applyItemLayout(itemWidth, itemHeight, commonLabelTextSizePx)
             }
         }
 
-        private fun applyItemLayout(itemWidth: Int, itemHeight: Int) {
+        private fun applyItemLayout(
+            itemWidth: Int,
+            itemHeight: Int,
+            commonLabelTextSizePx: Float,
+        ) {
             val recyclerViewHeight =
                 recyclerView.paddingTop + itemHeight + recyclerView.paddingBottom
             if (recyclerView.layoutParams.height != recyclerViewHeight) {
@@ -173,16 +182,37 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
                     height = recyclerViewHeight
                 }
             }
-            statAdapter.updateItemWidth(itemWidth)
+            statAdapter.updateLayout(
+                newScale = currentScale,
+                newItemWidth = itemWidth,
+                newLabelTextSizePx = commonLabelTextSizePx,
+            )
         }
 
         /**
-         * The inner RecyclerView needs an exact cross-axis height so every
-         * child can fill it and anchor its label to the same bottom edge.
-         * Reserve enough height for the requested one-line 14sp label size;
-         * labels that are too wide shrink inside this common bottom area.
+         * Calculate one shared size from the widest of all five labels. If the
+         * widest label needs to shrink, every label receives the same result.
          */
-        private fun calculateItemHeight(): Int {
+        private fun calculateCommonLabelTextSize(itemWidth: Int): Float {
+            val requestedSizePx = spToPx(BASE_LABEL_TEXT_SIZE_SP * currentScale)
+            val labelPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = requestedSizePx
+                typeface = Typeface.create("sans", Typeface.NORMAL)
+            }
+            val widestLabelWidth = items.maxOf { item ->
+                labelPaint.measureText(itemView.context.getString(item.labelRes))
+            }
+            val widthLimit = (itemWidth - 1).coerceAtLeast(1).toFloat()
+
+            return if (widestLabelWidth > widthLimit) {
+                (requestedSizePx * widthLimit / widestLabelWidth).coerceAtLeast(1f)
+            } else {
+                requestedSizePx
+            }
+        }
+
+        /** Give every child the same exact height and therefore the same bottom edge. */
+        private fun calculateItemHeight(commonLabelTextSizePx: Float): Int {
             val numberPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 textSize = spToPx(BASE_VALUE_TEXT_SIZE_SP * currentScale)
                 typeface = Typeface.create("sans", Typeface.BOLD)
@@ -191,7 +221,7 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
             val numberHeight = numberMetrics.descent - numberMetrics.ascent
 
             val labelPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                textSize = spToPx(BASE_LABEL_TEXT_SIZE_SP * currentScale)
+                textSize = commonLabelTextSizePx
                 typeface = Typeface.create("sans", Typeface.NORMAL)
             }
             val labelMetrics = labelPaint.fontMetricsInt
@@ -235,109 +265,100 @@ private class StatAdapter(
 
     private var scale = 1f
     private var itemWidth = ViewGroup.LayoutParams.WRAP_CONTENT
+    private var labelTextSizePx = 0f
+
+    override fun getItemViewType(position: Int): Int =
+        if (items[position].storageBytes == null) {
+            VIEW_TYPE_VALUE
+        } else {
+            VIEW_TYPE_CAPACITY
+        }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): StatViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_stat, parent, false)
+        val layoutRes = if (viewType == VIEW_TYPE_CAPACITY) {
+            R.layout.item_capacity_stat
+        } else {
+            R.layout.item_stat
+        }
+        val view = LayoutInflater.from(parent.context).inflate(layoutRes, parent, false)
         if (parent.measuredWidth > 0) {
             val spacing = parent.resources.getDimensionPixelSize(R.dimen.stat_item_spacing)
             val availableWidth = parent.measuredWidth - parent.paddingLeft - parent.paddingRight
             itemWidth = ((availableWidth - spacing * (items.size - 1)) / items.size).coerceAtLeast(1)
         }
         view.layoutParams.width = itemWidth
-        return StatViewHolder(view)
+        return if (viewType == VIEW_TYPE_CAPACITY) {
+            CapacityStatViewHolder(view)
+        } else {
+            ValueStatViewHolder(view)
+        }
     }
 
     override fun getItemCount(): Int = items.size.coerceAtMost(MAX_ITEMS)
 
     override fun onBindViewHolder(holder: StatViewHolder, position: Int) {
         holder.itemView.layoutParams = holder.itemView.layoutParams.apply { width = itemWidth }
-        holder.bind(items[position], scale)
+        holder.bind(items[position], scale, labelTextSizePx)
     }
 
-    fun updateScale(newScale: Float) {
-        if (newScale == scale) return
+    fun updateLayout(
+        newScale: Float,
+        newItemWidth: Int,
+        newLabelTextSizePx: Float,
+    ) {
+        if (newItemWidth <= 0 || newLabelTextSizePx <= 0f) return
+        if (
+            newScale == scale &&
+            newItemWidth == itemWidth &&
+            newLabelTextSizePx == labelTextSizePx
+        ) {
+            return
+        }
         scale = newScale
+        itemWidth = newItemWidth
+        labelTextSizePx = newLabelTextSizePx
         notifyItemRangeChanged(0, itemCount)
     }
 
-    fun updateItemWidth(newWidth: Int) {
-        if (newWidth <= 0 || newWidth == itemWidth) return
-        itemWidth = newWidth
-        notifyItemRangeChanged(0, itemCount)
-    }
-
-    class StatViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val value = itemView.findViewById<TextView>(R.id.stat_value)
-        private val capacity = itemView.findViewById<CapacityTextView>(R.id.stat_capacity)
+    abstract class StatViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val label = itemView.findViewById<TextView>(R.id.stat_label)
-        private var labelScale = 1f
 
-        init {
-            label.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-                if (right - left != oldRight - oldLeft) {
-                    fitLabelToWidth()
-                }
-            }
-        }
-
-        fun bind(item: StatItem, scale: Float) {
-            labelScale = scale
+        fun bind(item: StatItem, scale: Float, commonLabelTextSizePx: Float) {
             label.setText(item.labelRes)
-            fitLabelToWidth()
-
-            val storageBytes = item.storageBytes
-            if (storageBytes == null) {
-                value.visibility = View.VISIBLE
-                capacity.visibility = View.GONE
-                value.text = item.value.orEmpty()
-                value.textSize = BASE_VALUE_TEXT_SIZE_SP * scale
+            if (commonLabelTextSizePx > 0f) {
+                label.setTextSize(TypedValue.COMPLEX_UNIT_PX, commonLabelTextSizePx)
             } else {
-                value.visibility = View.GONE
-                capacity.visibility = View.VISIBLE
-                capacity.setCapacity(storageBytes, scale)
+                label.setTextSize(
+                    TypedValue.COMPLEX_UNIT_SP,
+                    BASE_LABEL_TEXT_SIZE_SP * scale,
+                )
             }
+            bindValue(item, scale)
         }
 
-        /**
-         * Start from 14sp multiplied by the content scale. Keep that requested
-         * size when it fits; otherwise shrink just enough for one complete line.
-         * The calculation always starts from the base size, never the previous
-         * fitted TextView size, so recycled holders cannot accumulate scaling.
-         */
-        private fun fitLabelToWidth() {
-            val requestedSizePx = TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_SP,
-                BASE_LABEL_TEXT_SIZE_SP * labelScale,
-                itemView.resources.displayMetrics,
-            )
-            val availableWidth =
-                label.width - label.compoundPaddingLeft - label.compoundPaddingRight
-            val labelText = label.text?.toString().orEmpty()
+        protected abstract fun bindValue(item: StatItem, scale: Float)
+    }
 
-            if (availableWidth <= 0 || labelText.isEmpty()) {
-                label.setTextSize(TypedValue.COMPLEX_UNIT_PX, requestedSizePx)
-                return
-            }
+    class ValueStatViewHolder(itemView: View) : StatViewHolder(itemView) {
+        private val value = itemView.findViewById<TextView>(R.id.stat_value)
 
-            val requestedTextWidth = TextPaint(label.paint).apply {
-                textSize = requestedSizePx
-            }.measureText(labelText)
-            val widthLimit = (availableWidth - 1).coerceAtLeast(1).toFloat()
-            val fittedSizePx = if (requestedTextWidth > widthLimit) {
-                requestedSizePx * widthLimit / requestedTextWidth
-            } else {
-                requestedSizePx
-            }
-
-            label.setTextSize(
-                TypedValue.COMPLEX_UNIT_PX,
-                fittedSizePx.coerceAtLeast(1f),
-            )
+        override fun bindValue(item: StatItem, scale: Float) {
+            value.text = item.value.orEmpty()
+            value.textSize = BASE_VALUE_TEXT_SIZE_SP * scale
         }
+    }
 
+    class CapacityStatViewHolder(itemView: View) : StatViewHolder(itemView) {
+        private val capacity = itemView.findViewById<CapacityTextView>(R.id.stat_capacity)
+
+        override fun bindValue(item: StatItem, scale: Float) {
+            capacity.setCapacity(item.storageBytes ?: 0L, scale)
+        }
     }
 
     companion object {
+        private const val VIEW_TYPE_VALUE = 0
+        private const val VIEW_TYPE_CAPACITY = 1
         private const val MAX_ITEMS = 5
     }
 }
