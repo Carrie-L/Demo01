@@ -3,8 +3,6 @@ package com.carrie.demo01
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.text.Layout
-import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.TypedValue
 import android.view.LayoutInflater
@@ -18,8 +16,7 @@ import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.roundToInt
 
 private const val BASE_VALUE_TEXT_SIZE_SP = 18f
-private const val BASE_LABEL_TEXT_SIZE_SP = 13f
-private const val STAT_LABEL_MAX_LINES = 4
+private const val BASE_LABEL_TEXT_SIZE_SP = 14f
 
 data class StatItem(
     val value: String? = null,
@@ -127,7 +124,7 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
 
     private class StatCardViewHolder(
         itemView: View,
-        private val items: List<StatItem>,
+        items: List<StatItem>,
     ) : RecyclerView.ViewHolder(itemView) {
         private val recyclerView = itemView as RecyclerView
         private val spacingPx = itemView.resources.getDimensionPixelSize(R.dimen.stat_item_spacing)
@@ -160,7 +157,7 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
             val availableWidth = recyclerViewWidth - recyclerView.paddingLeft - recyclerView.paddingRight
             val totalSpacing = spacingPx * (statAdapter.itemCount - 1)
             val itemWidth = ((availableWidth - totalSpacing) / statAdapter.itemCount).coerceAtLeast(1)
-            val itemHeight = calculateItemHeight(itemWidth)
+            val itemHeight = calculateItemHeight()
             if (recyclerView.isComputingLayout) {
                 recyclerView.post { applyItemLayout(itemWidth, itemHeight) }
             } else {
@@ -182,10 +179,10 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
         /**
          * The inner RecyclerView needs an exact cross-axis height so every
          * child can fill it and anchor its label to the same bottom edge.
-         * Measure the tallest label at the current width/scale instead of
-         * relying on whichever child LinearLayoutManager happens to measure.
+         * Reserve enough height for the requested one-line 14sp label size;
+         * labels that are too wide shrink inside this common bottom area.
          */
-        private fun calculateItemHeight(itemWidth: Int): Int {
+        private fun calculateItemHeight(): Int {
             val numberPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 textSize = spToPx(BASE_VALUE_TEXT_SIZE_SP * currentScale)
                 typeface = Typeface.create("sans", Typeface.BOLD)
@@ -197,25 +194,10 @@ class DemoListAdapter(initialScale: Float) : RecyclerView.Adapter<RecyclerView.V
                 textSize = spToPx(BASE_LABEL_TEXT_SIZE_SP * currentScale)
                 typeface = Typeface.create("sans", Typeface.NORMAL)
             }
-            val tallestLabelHeight = items.maxOf { item ->
-                val labelText = itemView.context.getString(item.labelRes)
-                StaticLayout.Builder.obtain(
-                    labelText,
-                    0,
-                    labelText.length,
-                    labelPaint,
-                    itemWidth,
-                )
-                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
-                    .setIncludePad(false)
-                    .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
-                    .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-                    .setMaxLines(STAT_LABEL_MAX_LINES)
-                    .build()
-                    .height
-            }
+            val labelMetrics = labelPaint.fontMetricsInt
+            val labelHeight = labelMetrics.descent - labelMetrics.ascent
 
-            return numberHeight + valueLabelSpacingPx + tallestLabelHeight
+            return numberHeight + valueLabelSpacingPx + labelHeight
         }
 
         private fun spToPx(value: Float): Float = TypedValue.applyDimension(
@@ -288,10 +270,20 @@ private class StatAdapter(
         private val value = itemView.findViewById<TextView>(R.id.stat_value)
         private val capacity = itemView.findViewById<CapacityTextView>(R.id.stat_capacity)
         private val label = itemView.findViewById<TextView>(R.id.stat_label)
+        private var labelScale = 1f
+
+        init {
+            label.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+                if (right - left != oldRight - oldLeft) {
+                    fitLabelToWidth()
+                }
+            }
+        }
 
         fun bind(item: StatItem, scale: Float) {
+            labelScale = scale
             label.setText(item.labelRes)
-            label.textSize = BASE_LABEL_TEXT_SIZE_SP * scale
+            fitLabelToWidth()
 
             val storageBytes = item.storageBytes
             if (storageBytes == null) {
@@ -304,6 +296,43 @@ private class StatAdapter(
                 capacity.visibility = View.VISIBLE
                 capacity.setCapacity(storageBytes, scale)
             }
+        }
+
+        /**
+         * Start from 14sp multiplied by the content scale. Keep that requested
+         * size when it fits; otherwise shrink just enough for one complete line.
+         * The calculation always starts from the base size, never the previous
+         * fitted TextView size, so recycled holders cannot accumulate scaling.
+         */
+        private fun fitLabelToWidth() {
+            val requestedSizePx = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP,
+                BASE_LABEL_TEXT_SIZE_SP * labelScale,
+                itemView.resources.displayMetrics,
+            )
+            val availableWidth =
+                label.width - label.compoundPaddingLeft - label.compoundPaddingRight
+            val labelText = label.text?.toString().orEmpty()
+
+            if (availableWidth <= 0 || labelText.isEmpty()) {
+                label.setTextSize(TypedValue.COMPLEX_UNIT_PX, requestedSizePx)
+                return
+            }
+
+            val requestedTextWidth = TextPaint(label.paint).apply {
+                textSize = requestedSizePx
+            }.measureText(labelText)
+            val widthLimit = (availableWidth - 1).coerceAtLeast(1).toFloat()
+            val fittedSizePx = if (requestedTextWidth > widthLimit) {
+                requestedSizePx * widthLimit / requestedTextWidth
+            } else {
+                requestedSizePx
+            }
+
+            label.setTextSize(
+                TypedValue.COMPLEX_UNIT_PX,
+                fittedSizePx.coerceAtLeast(1f),
+            )
         }
 
     }

@@ -45,12 +45,11 @@
         android:id="@+id/stat_label"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:breakStrategy="simple"
         android:gravity="center_horizontal|bottom"
-        android:hyphenationFrequency="none"
         android:includeFontPadding="false"
-        android:maxLines="4"
+        android:maxLines="1"
+        android:singleLine="true"
         android:textColor="@color/text_secondary"
-        android:textSize="13sp" />
+        android:textSize="14sp" />
 
 </LinearLayout>
