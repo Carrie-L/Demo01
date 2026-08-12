@@ -1,14 +1,14 @@
 package com.carrie.demo01
 
 import android.content.Context
+import android.text.Layout
 import android.text.Spannable
 import android.text.SpannableString
+import android.text.TextPaint
 import android.text.style.AbsoluteSizeSpan
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.widget.TextView
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -28,6 +28,8 @@ class CapacityTextView @JvmOverloads constructor(
 
     init {
         setSingleLine(true)
+        // Never replace the capacity with "...". The number is fitted below.
+        ellipsize = null
         textDirection = TEXT_DIRECTION_LTR
     }
 
@@ -46,7 +48,6 @@ class CapacityTextView @JvmOverloads constructor(
     }
 
     private fun rebuildText() {
-        val fullText = number + unit
         val availableWidth = width - totalPaddingLeft - totalPaddingRight
 
         // Always derive the unit size from the immutable 10sp resource. This
@@ -56,37 +57,71 @@ class CapacityTextView @JvmOverloads constructor(
         val unitTextSizePx = (
             resources.getDimension(R.dimen.cs_10_sp) * unitScale
         ).roundToInt().coerceAtLeast(1)
-        val unitPaint = android.text.TextPaint(paint).apply {
-            textSize = unitTextSizePx.toFloat()
-        }
-        val unitWidth = unitPaint.measureText(unit)
 
         val requestedNumberSizePx = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_SP,
             BASE_NUMBER_TEXT_SIZE_SP * contentScale,
             resources.displayMetrics,
-        )
-        val numberPaint = android.text.TextPaint(paint).apply {
-            textSize = requestedNumberSizePx
-        }
-        val requestedNumberWidth = numberPaint.measureText(number)
+        ).roundToInt().coerceAtLeast(1)
+
         val fittedNumberSizePx = if (availableWidth <= 0) {
             requestedNumberSizePx
         } else {
-            val numberWidthLimit = max(1f, availableWidth - unitWidth)
-            val fitRatio = if (requestedNumberWidth == 0f) {
-                1f
-            } else {
-                min(1f, numberWidthLimit / requestedNumberWidth)
-            }
-            max(1f, requestedNumberSizePx * fitRatio)
+            findLargestFittingNumberSize(
+                requestedNumberSizePx = requestedNumberSizePx,
+                unitTextSizePx = unitTextSizePx,
+                widthLimitPx = (availableWidth - FIT_SAFETY_PX).coerceAtLeast(1),
+            )
         }
 
-        text = SpannableString(fullText).apply {
+        text = buildStyledText(fittedNumberSizePx, unitTextSizePx)
+    }
+
+    /**
+     * Measure the final styled string, not the number and unit separately.
+     * This includes span processing, boundary kerning and TextView paint
+     * properties, which prevents a near-limit value from becoming ellipsized.
+     */
+    private fun findLargestFittingNumberSize(
+        requestedNumberSizePx: Int,
+        unitTextSizePx: Int,
+        widthLimitPx: Int,
+    ): Int {
+        if (
+            measureStyledText(requestedNumberSizePx, unitTextSizePx) <=
+            widthLimitPx.toFloat()
+        ) {
+            return requestedNumberSizePx
+        }
+
+        var low = 1
+        var high = requestedNumberSizePx
+        var best = 1
+        while (low <= high) {
+            val candidate = (low + high) ushr 1
+            if (measureStyledText(candidate, unitTextSizePx) <= widthLimitPx.toFloat()) {
+                best = candidate
+                low = candidate + 1
+            } else {
+                high = candidate - 1
+            }
+        }
+        return best
+    }
+
+    private fun measureStyledText(numberTextSizePx: Int, unitTextSizePx: Int): Float {
+        val styledText = buildStyledText(numberTextSizePx, unitTextSizePx)
+        return Layout.getDesiredWidth(styledText, TextPaint(paint))
+    }
+
+    private fun buildStyledText(
+        numberTextSizePx: Int,
+        unitTextSizePx: Int,
+    ): SpannableString {
+        val fullText = number + unit
+        return SpannableString(fullText).apply {
             setSpan(
-                // Floor instead of rounding up so the measured text never
-                // exceeds its allotted width because of pixel rounding.
-                AbsoluteSizeSpan(fittedNumberSizePx.toInt().coerceAtLeast(1)),
+                AbsoluteSizeSpan(numberTextSizePx),
                 0,
                 number.length,
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
@@ -106,5 +141,6 @@ class CapacityTextView @JvmOverloads constructor(
         private const val BASE_NUMBER_TEXT_SIZE_SP = 18f
         private const val MIN_CONTENT_SCALE = 0.85f
         private const val MAX_CONTENT_SCALE = 1.45f
+        private const val FIT_SAFETY_PX = 2
     }
 }
